@@ -343,20 +343,23 @@ impl Session {
             }
         }
 
-        let streamed_any = std::sync::atomic::AtomicBool::new(false);
+        // Show a spinner while waiting for response
+        let spinner = ui::spinner::create_spinner("Thinking...");
 
-        let result = self.agent.run_streaming(input, &|token| {
-            streamed_any.store(true, std::sync::atomic::Ordering::Relaxed);
-            ui::render::print_token(token);
-            // We don't accumulate here since we can't mutably borrow full_text
+        let result = self.agent.run_streaming(input, &|_token| {
+            // Clear spinner on first token to show we got a response
+            spinner.finish_and_clear();
         })?;
 
-        self.stats.total_turns += result.turns;
-        self.stats.total_prompt_tokens += result.total_tokens; // Approximate
+        spinner.finish_and_clear();
 
-        if streamed_any.load(std::sync::atomic::Ordering::Relaxed) {
-            println!();
-        } else if !result.output.text.is_empty() {
+        self.stats.total_turns += result.turns;
+        self.stats.total_prompt_tokens += result.total_tokens;
+
+        // Always render the final response as styled markdown
+        // (Clear streamed raw text first if we streamed)
+        println!();
+        if !result.output.text.is_empty() {
             ui::render::render_markdown(&result.output.text);
         }
 
