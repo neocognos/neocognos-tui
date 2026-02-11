@@ -1,11 +1,12 @@
-//! Split-pane layout: chat + sidebar on top, input bar on bottom.
+//! Split-pane layout: chat + sidebar (status + llm log) on top, input bar on bottom.
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-/// The three main areas of the UI.
+/// The main areas of the UI.
 pub struct AppLayout {
     pub chat: Rect,
-    pub sidebar: Rect,
+    pub sidebar_status: Rect,
+    pub sidebar_llm_log: Rect,
     pub input: Rect,
 }
 
@@ -28,9 +29,19 @@ pub fn compute_layout(area: Rect) -> AppLayout {
         ])
         .split(vertical[0]);
 
+    // Sidebar vertical split: status (top 40%) + LLM log (bottom 60%)
+    let sidebar = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(40),
+            Constraint::Percentage(60),
+        ])
+        .split(horizontal[1]);
+
     AppLayout {
         chat: horizontal[0],
-        sidebar: horizontal[1],
+        sidebar_status: sidebar[0],
+        sidebar_llm_log: sidebar[1],
         input: vertical[1],
     }
 }

@@ -11,6 +11,7 @@ pub enum AgentEvent {
     Narration(String),
     ToolCallStarted { name: String, args: String },
     ToolCallCompleted { name: String, success: bool, duration_ms: u64 },
+    LlmCall { model: String, prompt_tokens: usize, completion_tokens: usize, duration_ms: u64 },
     Response(String),
     TokenUpdate { total: usize, turns: usize, cost: f64 },
     Error(String),

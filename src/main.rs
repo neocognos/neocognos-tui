@@ -112,7 +112,8 @@ fn main() -> Result<()> {
         terminal.draw(|frame| {
             let layout = ui::layout::compute_layout(frame.area());
             ui::chat::render(frame, layout.chat, &app);
-            ui::sidebar::render(frame, layout.sidebar, &app);
+            ui::sidebar::render_status(frame, layout.sidebar_status, &app);
+            ui::sidebar::render_llm_log(frame, layout.sidebar_llm_log, &app);
             ui::input::render(frame, layout.input, &app);
         })?;
 
@@ -134,6 +135,14 @@ fn main() -> Result<()> {
                             app.add_recent_file(path);
                         }
                     }
+                }
+                AgentEvent::LlmCall { model, prompt_tokens, completion_tokens, duration_ms } => {
+                    app.llm_calls.push(app::LlmCallEntry {
+                        model,
+                        prompt_tokens,
+                        completion_tokens,
+                        duration_ms,
+                    });
                 }
                 AgentEvent::ToolCallCompleted { name, success, duration_ms } => {
                     app.add_message(ChatMessage::ToolResult {

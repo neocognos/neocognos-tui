@@ -49,6 +49,14 @@ impl EventListener for ChannelEventListener {
             EventKind::LlmNarration { text, .. } => {
                 let _ = self.tx.send(AgentEvent::Narration(text.clone()));
             }
+            EventKind::LlmCallCompleted { model, prompt_tokens, completion_tokens, duration_ms, .. } => {
+                let _ = self.tx.send(AgentEvent::LlmCall {
+                    model: model.clone(),
+                    prompt_tokens: *prompt_tokens,
+                    completion_tokens: *completion_tokens,
+                    duration_ms: *duration_ms,
+                });
+            }
             _ => {}
         }
     }

@@ -21,6 +21,15 @@ pub struct ToolStatus {
     pub success: bool,
 }
 
+/// LLM call log entry for the sidebar.
+#[derive(Debug, Clone)]
+pub struct LlmCallEntry {
+    pub model: String,
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub duration_ms: u64,
+}
+
 /// Status info for the sidebar.
 #[derive(Debug, Clone, Default)]
 pub struct StatusInfo {
@@ -55,6 +64,7 @@ pub struct App {
     pub status: StatusInfo,
     pub recent_files: Vec<String>,
     pub recent_tools: Vec<ToolStatus>,
+    pub llm_calls: Vec<LlmCallEntry>,
     pub agent_busy: bool,
     pub should_quit: bool,
     pub input_history: Vec<String>,
@@ -77,6 +87,7 @@ impl App {
             },
             recent_files: Vec::new(),
             recent_tools: Vec::new(),
+            llm_calls: Vec::new(),
             agent_busy: false,
             should_quit: false,
             input_history: Vec::new(),
