@@ -17,6 +17,7 @@ use neocognos_modules::history::HistoryModule;
 use neocognos_modules::identity::IdentityModule;
 use neocognos_modules::noop::NoopModule;
 use neocognos_modules::search_tools::SearchToolsModule;
+use neocognos_modules::semantic_memory::SemanticMemoryModule;
 use neocognos_modules::session_memory::SessionMemoryModule;
 use neocognos_protocol::*;
 
@@ -137,6 +138,7 @@ fn build_module_registry() -> ModuleRegistry {
     registry.register("about_me", || Box::new(AboutMeModule::new()));
     registry.register("search_tools", || Box::new(SearchToolsModule::new()));
     registry.register("session_memory", || Box::new(SessionMemoryModule::new()));
+    registry.register("semantic_memory", || Box::new(SemanticMemoryModule::new()));
     registry
 }
 
@@ -296,8 +298,8 @@ impl Session {
 
         // Modules
         let registry = build_module_registry();
-        let (modules, errors) = registry.load_from_configs(&module_configs);
-        for err in &errors {
+        let loaded = registry.load_from_configs(&module_configs);
+        for err in &loaded.errors {
             let _ = event_tx.send(AgentEvent::Error(format!("Warning: {err}")));
         }
 
@@ -305,7 +307,7 @@ impl Session {
         for mc in &module_configs {
             module_config_map.insert(mc.name.clone(), mc.config.clone());
         }
-        for module in modules {
+        for module in loaded.modules {
             agent.add_module(module);
         }
 
@@ -405,6 +407,25 @@ impl Session {
                     sm_clone.execute_tool(call)
                 }));
             }
+        }
+        // Semantic memory
+        {
+            let mut sem = SemanticMemoryModule::new();
+            if let Some(cfg) = module_config_map.get("semantic_memory") {
+                sem.init(cfg).ok();
+            }
+            let sem = Arc::new(sem);
+            for tool_name in &["remember", "recall", "forget", "memory_stats"] {
+                let sem_clone = sem.clone();
+                agent.register_tool_executor(*tool_name, Arc::new(move |call| {
+                    sem_clone.execute_tool(call)
+                }));
+            }
+        }
+
+        // Register gRPC module tool executors
+        for (tool_name, executor) in loaded.grpc_tool_executors {
+            agent.register_tool_executor(&tool_name, executor);
         }
 
         // Event bus with channel listener
