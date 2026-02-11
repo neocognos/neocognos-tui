@@ -1,5 +1,8 @@
 //! Slash command handling.
 
+use crossterm::style::{self, Stylize};
+use crate::ui::theme;
+
 /// Result of processing a slash command.
 pub enum CommandResult {
     /// Not a command, treat as regular input.
@@ -13,19 +16,24 @@ pub enum CommandResult {
     /// Clear the screen.
     Clear,
     /// Execute shell command.
-    ExecShell(String),
+    ShellCommand(String),
 }
 
-/// Process a potential slash command. Returns CommandResult.
+/// Process a potential slash command or shell command. Returns CommandResult.
 pub fn process_command(input: &str) -> CommandResult {
     let trimmed = input.trim();
     
-    // Handle ! commands (shell execution)
-    if let Some(cmd) = trimmed.strip_prefix('!') {
-        return CommandResult::ExecShell(cmd.to_string());
+    // Handle ! prefix for direct shell commands
+    if trimmed.starts_with('!') {
+        let command = trimmed[1..].trim();
+        if command.is_empty() {
+            println!("Usage: !<command>");
+            return CommandResult::Continue;
+        }
+        return CommandResult::ShellCommand(command.to_string());
     }
     
-    // Handle / commands
+    // Handle / prefix for TUI commands
     if !trimmed.starts_with('/') {
         return CommandResult::NotACommand;
     }
@@ -61,9 +69,6 @@ pub fn process_command(input: &str) -> CommandResult {
 }
 
 fn print_help() {
-    use crossterm::style::{self, Stylize};
-    use crate::ui::theme;
-
     println!();
     println!("{}", style::style("Available Commands").with(theme::ACCENT_COLOR).bold());
     println!("  {}  — Exit the application", style::style("/quit").with(theme::USER_COLOR));

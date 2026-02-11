@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use neocognos_kernel::events::{EventBus, StderrListener};
+use neocognos_kernel::events::{EventBus, EventListener, EventKind, KernelEvent, StderrListener};
 use neocognos_kernel::llm::{AnthropicClient, ClaudeCliClient, LlmClient, MockLlmClient, MockStrategy, OllamaClient};
 use neocognos_kernel::loop_runner::AgentLoop;
 use neocognos_kernel::module_loader::ModuleRegistry;
@@ -13,13 +13,78 @@ use neocognos_kernel::policy::PolicyEngine;
 use neocognos_kernel::workflow_router::CompiledRouter;
 use neocognos_modules::about_me::AboutMeModule;
 use neocognos_modules::exec_tool::ExecModule;
+
+use crate::ui;
+
+/// TUI event listener — displays workflow stage progress in the terminal.
+struct TuiEventListener;
+
+impl EventListener for TuiEventListener {
+    fn on_event(&self, event: &KernelEvent) {
+        match &event.event {
+            EventKind::StageStarted { stage_id, stage_kind, .. } => {
+                use crossterm::style::{self, Stylize};
+                eprint!("  {} {} ",
+                    style::style("▶").with(crossterm::style::Color::Cyan),
+                    style::style(format!("{} ({})", stage_id, stage_kind)).with(crossterm::style::Color::DarkGrey),
+                );
+                use std::io::Write;
+                let _ = std::io::stderr().flush();
+            }
+            EventKind::StageCompleted { stage_id: _, stage_kind: _, duration_ms, skipped, .. } => {
+                use crossterm::style::{self, Stylize};
+                if *skipped {
+                    eprintln!("{}", style::style("skipped").with(crossterm::style::Color::DarkYellow));
+                } else {
+                    eprintln!("{}", style::style(format!("{}ms", duration_ms)).with(crossterm::style::Color::DarkGrey));
+                }
+            }
+            EventKind::ToolCallStarted { tool_name, arguments, .. } => {
+                use crossterm::style::{self, Stylize};
+                let args_short = if arguments.len() > 60 {
+                    format!("{}...", &arguments[..57])
+                } else {
+                    arguments.clone()
+                };
+                eprintln!("  {} {} {}",
+                    style::style("⚡").with(crossterm::style::Color::Yellow),
+                    style::style(tool_name).with(crossterm::style::Color::Yellow).bold(),
+                    style::style(args_short).with(crossterm::style::Color::DarkGrey),
+                );
+            }
+            EventKind::ToolCallCompleted { tool_name, success, duration_ms, .. } => {
+                use crossterm::style::{self, Stylize};
+                let icon = if *success { "✓" } else { "✗" };
+                let color = if *success { crossterm::style::Color::Green } else { crossterm::style::Color::Red };
+                eprintln!("  {} {} {}",
+                    style::style(icon).with(color),
+                    style::style(tool_name).with(crossterm::style::Color::DarkGrey),
+                    style::style(format!("{}ms", duration_ms)).with(crossterm::style::Color::DarkGrey),
+                );
+            }
+            EventKind::LlmCallStarted { model, .. } => {
+                use crossterm::style::{self, Stylize};
+                eprint!("  {} {} ",
+                    style::style("🧠").reset(),
+                    style::style(format!("llm ({})", model)).with(crossterm::style::Color::DarkGrey),
+                );
+                use std::io::Write;
+                let _ = std::io::stderr().flush();
+            }
+            EventKind::LlmCallCompleted { duration_ms, completion_tokens, .. } => {
+                use crossterm::style::{self, Stylize};
+                eprintln!("{}", style::style(format!("{}ms, {} tokens", duration_ms, completion_tokens)).with(crossterm::style::Color::DarkGrey));
+            }
+            _ => {}
+        }
+    }
+}
 use neocognos_modules::file_tools::FileToolsModule;
 use neocognos_modules::history::HistoryModule;
 use neocognos_modules::identity::IdentityModule;
 use neocognos_modules::noop::NoopModule;
 use neocognos_protocol::*;
 
-use crate::ui;
 
 /// Session statistics displayed in the status bar.
 #[derive(Debug, Clone, Default)]
@@ -311,10 +376,13 @@ impl Session {
             }));
         }
 
-        // Event bus
-        if cfg.verbose {
+        // Event bus — always attach TUI listener for stage progress
+        {
             let mut bus = EventBus::new(&format!("tui-{}", std::process::id()));
-            bus.add_listener(Box::new(StderrListener::new(true)));
+            bus.add_listener(Box::new(TuiEventListener));
+            if cfg.verbose {
+                bus.add_listener(Box::new(StderrListener::new(true)));
+            }
             agent.set_event_bus(bus);
         }
 

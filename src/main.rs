@@ -130,6 +130,20 @@ fn main() -> Result<()> {
                 println!("⚠ Model switching at runtime not yet implemented. Restart with --model {model}");
                 continue;
             }
+            commands::CommandResult::ShellCommand(cmd) => {
+                let output = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&cmd)
+                    .output();
+                match output {
+                    Ok(out) => {
+                        print!("{}", String::from_utf8_lossy(&out.stdout));
+                        eprint!("{}", String::from_utf8_lossy(&out.stderr));
+                    }
+                    Err(e) => eprintln!("Error: {e}"),
+                }
+                continue;
+            }
         }
 
         match session.run_turn(input) {
