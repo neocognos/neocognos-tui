@@ -48,3 +48,66 @@ pub fn process_command(input: &str) -> CommandResult {
         _ => CommandResult::Continue,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quit_command() {
+        assert!(matches!(process_command("/quit"), CommandResult::Quit));
+        assert!(matches!(process_command("/q"), CommandResult::Quit));
+        assert!(matches!(process_command("/exit"), CommandResult::Quit));
+    }
+
+    #[test]
+    fn test_help_command() {
+        assert!(matches!(process_command("/help"), CommandResult::Continue));
+        assert!(matches!(process_command("/?"), CommandResult::Continue));
+    }
+
+    #[test]
+    fn test_clear_command() {
+        assert!(matches!(process_command("/clear"), CommandResult::Clear));
+    }
+
+    #[test]
+    fn test_compact_command() {
+        assert!(matches!(process_command("/compact"), CommandResult::Compact));
+    }
+
+    #[test]
+    fn test_cost_command() {
+        assert!(matches!(process_command("/cost"), CommandResult::Cost));
+    }
+
+    #[test]
+    fn test_model_command() {
+        match process_command("/model sonnet") {
+            CommandResult::SwitchModel(m) => assert_eq!(m, "sonnet"),
+            _ => panic!("expected SwitchModel"),
+        }
+        // No arg returns Continue
+        assert!(matches!(process_command("/model"), CommandResult::Continue));
+    }
+
+    #[test]
+    fn test_shell_command() {
+        match process_command("!ls -la") {
+            CommandResult::ShellCommand(c) => assert_eq!(c, "ls -la"),
+            _ => panic!("expected ShellCommand"),
+        }
+        // Empty shell command
+        assert!(matches!(process_command("!"), CommandResult::Continue));
+    }
+
+    #[test]
+    fn test_not_a_command() {
+        assert!(matches!(process_command("hello"), CommandResult::NotACommand));
+    }
+
+    #[test]
+    fn test_unknown_slash() {
+        assert!(matches!(process_command("/unknown"), CommandResult::Continue));
+    }
+}

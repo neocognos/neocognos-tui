@@ -45,3 +45,42 @@ pub fn compute_layout(area: Rect) -> AppLayout {
         input: vertical[1],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_layout_dimensions() {
+        let area = Rect::new(0, 0, 120, 40);
+        let layout = compute_layout(area);
+
+        // Input bar should be 3 lines tall at the bottom
+        assert_eq!(layout.input.height, 3);
+        assert_eq!(layout.input.y, 37);
+        assert_eq!(layout.input.width, 120);
+
+        // Chat should take ~75% width
+        assert!(layout.chat.width >= 85 && layout.chat.width <= 95);
+        // Chat height = total - input
+        assert_eq!(layout.chat.height, 37);
+
+        // Sidebar should take ~25%
+        let sidebar_w = layout.sidebar_status.width;
+        assert!(sidebar_w >= 25 && sidebar_w <= 35);
+    }
+
+    #[test]
+    fn test_sidebar_split() {
+        let area = Rect::new(0, 0, 120, 40);
+        let layout = compute_layout(area);
+
+        // Status is top part, llm_log is bottom part of sidebar
+        assert!(layout.sidebar_status.y < layout.sidebar_llm_log.y);
+        // Combined heights should equal the main area height (37)
+        let combined = layout.sidebar_status.height + layout.sidebar_llm_log.height;
+        assert_eq!(combined, 37);
+        // Status ~40%, log ~60%
+        assert!(layout.sidebar_status.height < layout.sidebar_llm_log.height);
+    }
+}

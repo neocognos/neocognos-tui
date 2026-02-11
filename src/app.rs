@@ -242,3 +242,178 @@ impl App {
         self.scroll_offset = 0;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_new() {
+        let app = App::new("test-agent", "sonnet", "default");
+        assert!(app.messages.is_empty());
+        assert!(app.input.is_empty());
+        assert_eq!(app.cursor_pos, 0);
+        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.status.agent_name, "test-agent");
+        assert_eq!(app.status.model, "sonnet");
+        assert_eq!(app.status.workflow, "default");
+        assert_eq!(app.status.total_tokens, 0);
+        assert_eq!(app.status.cost, 0.0);
+        assert_eq!(app.focus, PanelFocus::Chat);
+        assert!(!app.agent_busy);
+        assert!(!app.should_quit);
+        assert!(app.input_history.is_empty());
+        assert!(app.history_index.is_none());
+    }
+
+    #[test]
+    fn test_add_message() {
+        let mut app = App::new("a", "m", "w");
+        app.add_message(ChatMessage::User("hello".into()));
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.scroll_offset, usize::MAX);
+        app.add_message(ChatMessage::Assistant("hi".into()));
+        assert_eq!(app.messages.len(), 2);
+    }
+
+    #[test]
+    fn test_add_recent_tool() {
+        let mut app = App::new("a", "m", "w");
+        for i in 0..10 {
+            app.add_recent_tool(format!("tool_{i}"), true);
+        }
+        assert_eq!(app.recent_tools.len(), 8); // max capacity
+        assert_eq!(app.recent_tools[0].name, "tool_9"); // most recent first
+    }
+
+    #[test]
+    fn test_add_recent_file() {
+        let mut app = App::new("a", "m", "w");
+        app.add_recent_file("a.rs".into());
+        app.add_recent_file("b.rs".into());
+        app.add_recent_file("a.rs".into()); // dedup
+        assert_eq!(app.recent_files.len(), 2);
+        assert_eq!(app.recent_files[0], "a.rs"); // moved to front
+
+        for i in 0..15 {
+            app.add_recent_file(format!("file_{i}.rs"));
+        }
+        assert_eq!(app.recent_files.len(), 10); // max capacity
+    }
+
+    #[test]
+    fn test_input_editing() {
+        let mut app = App::new("a", "m", "w");
+        app.insert_char('h');
+        app.insert_char('i');
+        assert_eq!(app.input, "hi");
+        assert_eq!(app.cursor_pos, 2);
+
+        app.move_cursor_left();
+        assert_eq!(app.cursor_pos, 1);
+        app.insert_char('!');
+        assert_eq!(app.input, "h!i");
+
+        app.move_cursor_home();
+        assert_eq!(app.cursor_pos, 0);
+        app.move_cursor_end();
+        assert_eq!(app.cursor_pos, 3);
+
+        app.delete_char_before();
+        assert_eq!(app.input, "h!");
+        app.move_cursor_home();
+        app.delete_char_after();
+        assert_eq!(app.input, "!");
+    }
+
+    #[test]
+    fn test_history_navigation() {
+        let mut app = App::new("a", "m", "w");
+        app.input = "first".into();
+        app.submit_input();
+        app.input = "second".into();
+        app.submit_input();
+
+        app.history_up();
+        assert_eq!(app.input, "second");
+        app.history_up();
+        assert_eq!(app.input, "first");
+        app.history_up(); // at beginning, stays
+        assert_eq!(app.input, "first");
+
+        app.history_down();
+        assert_eq!(app.input, "second");
+        app.history_down(); // past end, clears
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn test_panel_focus_toggle() {
+        let mut app = App::new("a", "m", "w");
+        assert_eq!(app.focus, PanelFocus::Chat);
+        app.focus = PanelFocus::Trace;
+        assert_eq!(app.focus, PanelFocus::Trace);
+        app.focus = PanelFocus::Chat;
+        assert_eq!(app.focus, PanelFocus::Chat);
+    }
+
+    #[test]
+    fn test_status_display() {
+        let mut info = StatusInfo::default();
+        info.total_tokens = 500;
+        assert_eq!(info.tokens_display(), "500");
+
+        info.total_tokens = 1000;
+        assert_eq!(info.tokens_display(), "1.0k");
+
+        info.total_tokens = 15432;
+        assert_eq!(info.tokens_display(), "15.4k");
+
+        info.cost = 0.0123;
+        assert_eq!(info.cost_display(), "~$0.0123");
+    }
+
+    #[test]
+    fn test_clear_messages() {
+        let mut app = App::new("a", "m", "w");
+        app.add_message(ChatMessage::User("hi".into()));
+        app.add_message(ChatMessage::System("ok".into()));
+        assert_eq!(app.messages.len(), 2);
+        app.clear_messages();
+        assert!(app.messages.is_empty());
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_submit_input_empty() {
+        let mut app = App::new("a", "m", "w");
+        app.input = "   ".into();
+        assert!(app.submit_input().is_none());
+        assert!(app.input_history.is_empty());
+    }
+
+    #[test]
+    fn test_chat_message_variants() {
+        let _msgs = vec![
+            ChatMessage::User("u".into()),
+            ChatMessage::Assistant("a".into()),
+            ChatMessage::Narration("n".into()),
+            ChatMessage::ToolCall { name: "t".into(), args_short: "{}".into() },
+            ChatMessage::ToolResult { name: "t".into(), success: true, duration_ms: 100 },
+            ChatMessage::Error("e".into()),
+            ChatMessage::System("s".into()),
+        ];
+    }
+
+    #[test]
+    fn test_trace_entry_variants() {
+        let _entries = vec![
+            TraceEntry::StageStart { id: "s1".into(), kind: "plan".into() },
+            TraceEntry::StageEnd { id: "s1".into(), duration_ms: 50, skipped: false },
+            TraceEntry::LlmCall { model: "m".into(), ctx_tokens: 100, out_tokens: 50, duration_ms: 200 },
+            TraceEntry::ToolCall { name: "t".into(), args: "{}".into() },
+            TraceEntry::ToolResult { name: "t".into(), success: true, duration_ms: 10 },
+            TraceEntry::Narration("n".into()),
+        ];
+    }
+}
