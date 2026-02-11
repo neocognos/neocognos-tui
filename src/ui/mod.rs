@@ -1,4 +1,5 @@
-pub mod prompt;
-pub mod render;
-pub mod spinner;
+pub mod chat;
+pub mod input;
+pub mod layout;
+pub mod sidebar;
 pub mod theme;

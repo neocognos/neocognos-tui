@@ -1,11 +1,10 @@
 //! Agent session management — wraps kernel AgentLoop with TUI-specific callbacks.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{mpsc, Arc};
 
 use anyhow::Result;
-use neocognos_kernel::events::{EventBus, EventListener, EventKind, KernelEvent, StderrListener};
+use neocognos_kernel::events::{EventBus, EventListener, EventKind, KernelEvent};
 use neocognos_kernel::llm::{AnthropicClient, ClaudeCliClient, LlmClient, MockLlmClient, MockStrategy, OllamaClient};
 use neocognos_kernel::loop_runner::AgentLoop;
 use neocognos_kernel::module_loader::ModuleRegistry;
@@ -13,131 +12,47 @@ use neocognos_kernel::policy::PolicyEngine;
 use neocognos_kernel::workflow_router::CompiledRouter;
 use neocognos_modules::about_me::AboutMeModule;
 use neocognos_modules::exec_tool::ExecModule;
-
-use crate::ui;
-
-/// TUI event listener — displays workflow stage progress in the terminal.
-struct TuiEventListener {
-    /// Track current depth for indentation (shared via atomic)
-    depth: std::sync::atomic::AtomicUsize,
-    /// Show full stage-level details (--verbose)
-    verbose: bool,
-}
-
-impl TuiEventListener {
-    fn new(verbose: bool) -> Self {
-        Self {
-            depth: std::sync::atomic::AtomicUsize::new(0),
-            verbose,
-        }
-    }
-
-    fn indent(&self) -> String {
-        let d = self.depth.load(std::sync::atomic::Ordering::Relaxed);
-        "  ".repeat(d + 1) // base indent + depth
-    }
-}
-
-impl EventListener for TuiEventListener {
-    fn on_event(&self, event: &KernelEvent) {
-        use crossterm::style::{self, Stylize};
-        use std::io::Write;
-
-        match &event.event {
-            EventKind::StageStarted { stage_id, stage_kind, stage_path, .. } => {
-                self.depth.store(stage_path.len(), std::sync::atomic::Ordering::Relaxed);
-                if self.verbose {
-                    let indent = self.indent();
-                    let connector = if stage_path.len() > 1 { "├─" } else { "" };
-                    eprint!("{}{}{} {} ",
-                        indent,
-                        style::style(connector).with(crossterm::style::Color::DarkGrey),
-                        style::style("▶").with(crossterm::style::Color::Cyan),
-                        style::style(format!("{} ({})", stage_id, stage_kind)).with(crossterm::style::Color::DarkGrey),
-                    );
-                    let _ = std::io::stderr().flush();
-                }
-            }
-            EventKind::StageCompleted { duration_ms, skipped, .. } => {
-                if self.verbose {
-                    if *skipped {
-                        eprintln!("{}", style::style("skipped").with(crossterm::style::Color::DarkYellow));
-                    } else {
-                        eprintln!("{}", style::style(format!("{}ms", duration_ms)).with(crossterm::style::Color::DarkGrey));
-                    }
-                }
-            }
-            EventKind::ToolCallStarted { tool_name, arguments, .. } => {
-                if self.verbose {
-                    let indent = self.indent();
-                    let args_short = if arguments.len() > 60 {
-                        format!("{}...", &arguments[..57])
-                    } else {
-                        arguments.clone()
-                    };
-                    eprintln!("{}  {} {} {}",
-                        indent,
-                        style::style("⚡").with(crossterm::style::Color::Yellow),
-                        style::style(tool_name).with(crossterm::style::Color::Yellow).bold(),
-                        style::style(args_short).with(crossterm::style::Color::DarkGrey),
-                    );
-                }
-            }
-            EventKind::ToolCallCompleted { tool_name, success, duration_ms, .. } => {
-                if self.verbose {
-                    let indent = self.indent();
-                    let icon = if *success { "✓" } else { "✗" };
-                    let color = if *success { crossterm::style::Color::Green } else { crossterm::style::Color::Red };
-                    eprintln!("{}  {} {} {}",
-                        indent,
-                        style::style(icon).with(color),
-                        style::style(tool_name).with(crossterm::style::Color::DarkGrey),
-                        style::style(format!("{}ms", duration_ms)).with(crossterm::style::Color::DarkGrey),
-                    );
-                } else if !*success {
-                    // Always show errors even in non-verbose
-                    let indent = self.indent();
-                    eprintln!("{}  {} {} failed",
-                        indent,
-                        style::style("✗").with(crossterm::style::Color::Red),
-                        style::style(tool_name).with(crossterm::style::Color::Red),
-                    );
-                }
-            }
-            EventKind::LlmNarration { text, .. } => {
-                let indent = self.indent();
-                eprintln!("{}  {} {}",
-                    indent,
-                    style::style("💬").reset(),
-                    style::style(text).with(crossterm::style::Color::White),
-                );
-            }
-            EventKind::LlmCallStarted { model, .. } => {
-                if self.verbose {
-                    let indent = self.indent();
-                    eprint!("{}  {} {} ",
-                        indent,
-                        style::style("🧠").reset(),
-                        style::style(format!("llm ({})", model)).with(crossterm::style::Color::DarkGrey),
-                    );
-                    let _ = std::io::stderr().flush();
-                }
-            }
-            EventKind::LlmCallCompleted { duration_ms, completion_tokens, .. } => {
-                if self.verbose {
-                    eprintln!("{}", style::style(format!("{}ms, {} tokens", duration_ms, completion_tokens)).with(crossterm::style::Color::DarkGrey));
-                }
-            }
-            _ => {}
-        }
-    }
-}
 use neocognos_modules::file_tools::FileToolsModule;
 use neocognos_modules::history::HistoryModule;
 use neocognos_modules::identity::IdentityModule;
 use neocognos_modules::noop::NoopModule;
 use neocognos_protocol::*;
 
+use crate::agent_thread::AgentEvent;
+
+/// TUI event listener that sends events through an mpsc channel.
+struct ChannelEventListener {
+    tx: mpsc::Sender<AgentEvent>,
+}
+
+impl EventListener for ChannelEventListener {
+    fn on_event(&self, event: &KernelEvent) {
+        match &event.event {
+            EventKind::ToolCallStarted { tool_name, arguments, .. } => {
+                let args_short = if arguments.len() > 60 {
+                    format!("{}...", &arguments[..57])
+                } else {
+                    arguments.clone()
+                };
+                let _ = self.tx.send(AgentEvent::ToolCallStarted {
+                    name: tool_name.clone(),
+                    args: args_short,
+                });
+            }
+            EventKind::ToolCallCompleted { tool_name, success, duration_ms, .. } => {
+                let _ = self.tx.send(AgentEvent::ToolCallCompleted {
+                    name: tool_name.clone(),
+                    success: *success,
+                    duration_ms: *duration_ms,
+                });
+            }
+            EventKind::LlmNarration { text, .. } => {
+                let _ = self.tx.send(AgentEvent::Narration(text.clone()));
+            }
+            _ => {}
+        }
+    }
+}
 
 /// Session statistics displayed in the status bar.
 #[derive(Debug, Clone, Default)]
@@ -152,7 +67,6 @@ impl SessionStats {
         self.total_prompt_tokens + self.total_completion_tokens
     }
 
-    /// Rough cost estimate (Anthropic Sonnet pricing as default).
     pub fn estimated_cost(&self) -> f64 {
         let input_cost = self.total_prompt_tokens as f64 * 3.0 / 1_000_000.0;
         let output_cost = self.total_completion_tokens as f64 * 15.0 / 1_000_000.0;
@@ -186,6 +100,8 @@ pub struct Session {
     pub workflow_name: String,
     pub compiled_router: Option<CompiledRouter>,
     pub verbose: bool,
+    /// Channel sender for UI events — set after construction.
+    event_tx: Option<mpsc::Sender<AgentEvent>>,
 }
 
 fn build_module_registry() -> ModuleRegistry {
@@ -201,7 +117,7 @@ fn build_module_registry() -> ModuleRegistry {
 
 impl Session {
     /// Create a new session from CLI configuration.
-    pub fn from_config(cfg: SessionConfig) -> Result<Self> {
+    pub fn from_config(cfg: SessionConfig, event_tx: mpsc::Sender<AgentEvent>) -> Result<Self> {
         // Load manifest or defaults
         let (config, system_prompt, module_configs, manifest_model, behavior_config,
              workflow_path, workflow_router_config, manifest_name, manifest_version) =
@@ -356,7 +272,9 @@ impl Session {
         // Modules
         let registry = build_module_registry();
         let (modules, errors) = registry.load_from_configs(&module_configs);
-        for err in &errors { eprintln!("Warning: {err}"); }
+        for err in &errors {
+            let _ = event_tx.send(AgentEvent::Error(format!("Warning: {err}")));
+        }
 
         let mut module_config_map: HashMap<String, serde_json::Value> = HashMap::new();
         for mc in &module_configs {
@@ -430,13 +348,10 @@ impl Session {
             }));
         }
 
-        // Event bus — always attach TUI listener for stage progress
+        // Event bus with channel listener
         {
             let mut bus = EventBus::new(&format!("tui-{}", std::process::id()));
-            bus.add_listener(Box::new(TuiEventListener::new(cfg.verbose)));
-            if cfg.verbose {
-                bus.add_listener(Box::new(StderrListener::new(true)));
-            }
+            bus.add_listener(Box::new(ChannelEventListener { tx: event_tx.clone() }));
             agent.set_event_bus(bus);
         }
 
@@ -451,11 +366,12 @@ impl Session {
             workflow_name: workflow_name_str,
             compiled_router,
             verbose: cfg.verbose,
+            event_tx: Some(event_tx),
         })
     }
 
-    /// Run a single user turn with streaming output.
-    pub fn run_turn(&mut self, input: &str) -> Result<String> {
+    /// Run a single user turn, sending events through the channel.
+    pub fn run_turn_with_events(&mut self, input: &str, _event_tx: &mpsc::Sender<AgentEvent>) -> Result<String> {
         // Route workflow if needed
         if let Some(ref router) = self.compiled_router {
             let selected_path = router.select(input);
@@ -466,54 +382,31 @@ impl Session {
             }
         }
 
-        // In verbose mode, show a spinner; in normal mode, narration events are the progress
-        let spinner = if self.verbose {
-            Some(ui::spinner::create_thinking_spinner())
-        } else {
-            None
-        };
-
         let result = self.agent.run_streaming(input, &|_token| {})?;
-
-        if let Some(s) = spinner {
-            s.finish_and_clear();
-        }
 
         self.stats.total_turns += result.turns;
         self.stats.total_prompt_tokens += result.total_tokens;
 
         if !result.output.text.is_empty() {
-            ui::render::render_markdown(&result.output.text);
+            if let Some(ref tx) = self.event_tx {
+                let _ = tx.send(AgentEvent::Response(result.output.text.clone()));
+            }
         }
 
         Ok(result.output.text)
     }
 
-    /// Compact conversation history, keeping only the last 2 exchanges.
-    pub fn compact(&mut self) {
+    /// Compact conversation history.
+    pub fn compact_with_callback<F: Fn(String)>(&mut self, callback: F) {
         match self.agent.compact_history(2) {
             Some((old, new)) => {
-                println!("✅ Compacted: {} messages → {} messages", old, new);
-                // Reset token stats
+                callback(format!("✅ Compacted: {} messages → {} messages", old, new));
                 self.stats.total_prompt_tokens = 0;
                 self.stats.total_completion_tokens = 0;
             }
             None => {
-                println!("⚠ No history module found to compact.");
+                callback("⚠ No history module found to compact.".to_string());
             }
-        }
-    }
-
-    /// Check token budget and print warning if > 80% full.
-    pub fn check_token_budget(&self) {
-        let budget = 200_000usize; // default budget
-        let used = self.stats.total_tokens();
-        let pct = (used as f64 / budget as f64 * 100.0) as usize;
-        if pct > 80 {
-            let used_k = used / 1000;
-            let budget_k = budget / 1000;
-            eprintln!("⚠ Context is {}% full ({}k/{}k tokens). Use /compact to free space.",
-                pct, used_k, budget_k);
         }
     }
 
