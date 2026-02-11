@@ -82,8 +82,12 @@ fn print_help() {
         style::style("!ls -la").with(theme::DIM_COLOR),
         style::style("!pwd").with(theme::DIM_COLOR));
     println!();
+    println!("{}", style::style("Keyboard Shortcuts").with(theme::ACCENT_COLOR).bold());
+    println!("  {} — Clear the screen", style::style("Ctrl+L").with(theme::USER_COLOR));
+    println!("  {} — Exit", style::style("Ctrl+D").with(theme::USER_COLOR));
+    println!("  {} — Cancel current line", style::style("Ctrl+C").with(theme::USER_COLOR));
+    println!();
     println!("{}", style::style("Input").with(theme::ACCENT_COLOR).bold());
     println!("  Use \\ at end of line for multi-line input");
-    println!("  Ctrl+D to exit, Ctrl+C to cancel current line");
     println!();
 }
