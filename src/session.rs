@@ -17,22 +17,41 @@ use neocognos_modules::exec_tool::ExecModule;
 use crate::ui;
 
 /// TUI event listener — displays workflow stage progress in the terminal.
-struct TuiEventListener;
+struct TuiEventListener {
+    /// Track current depth for indentation (shared via atomic)
+    depth: std::sync::atomic::AtomicUsize,
+}
+
+impl TuiEventListener {
+    fn new() -> Self {
+        Self { depth: std::sync::atomic::AtomicUsize::new(0) }
+    }
+
+    fn indent(&self) -> String {
+        let d = self.depth.load(std::sync::atomic::Ordering::Relaxed);
+        "  ".repeat(d + 1) // base indent + depth
+    }
+}
 
 impl EventListener for TuiEventListener {
     fn on_event(&self, event: &KernelEvent) {
+        use crossterm::style::{self, Stylize};
+        use std::io::Write;
+
         match &event.event {
-            EventKind::StageStarted { stage_id, stage_kind, .. } => {
-                use crossterm::style::{self, Stylize};
-                eprint!("  {} {} ",
+            EventKind::StageStarted { stage_id, stage_kind, stage_path, .. } => {
+                self.depth.store(stage_path.len(), std::sync::atomic::Ordering::Relaxed);
+                let indent = self.indent();
+                let connector = if stage_path.len() > 1 { "├─" } else { "" };
+                eprint!("{}{}{} {} ",
+                    indent,
+                    style::style(connector).with(crossterm::style::Color::DarkGrey),
                     style::style("▶").with(crossterm::style::Color::Cyan),
                     style::style(format!("{} ({})", stage_id, stage_kind)).with(crossterm::style::Color::DarkGrey),
                 );
-                use std::io::Write;
                 let _ = std::io::stderr().flush();
             }
-            EventKind::StageCompleted { stage_id: _, stage_kind: _, duration_ms, skipped, .. } => {
-                use crossterm::style::{self, Stylize};
+            EventKind::StageCompleted { duration_ms, skipped, .. } => {
                 if *skipped {
                     eprintln!("{}", style::style("skipped").with(crossterm::style::Color::DarkYellow));
                 } else {
@@ -40,39 +59,40 @@ impl EventListener for TuiEventListener {
                 }
             }
             EventKind::ToolCallStarted { tool_name, arguments, .. } => {
-                use crossterm::style::{self, Stylize};
+                let indent = self.indent();
                 let args_short = if arguments.len() > 60 {
                     format!("{}...", &arguments[..57])
                 } else {
                     arguments.clone()
                 };
-                eprintln!("  {} {} {}",
+                eprintln!("{}  {} {} {}",
+                    indent,
                     style::style("⚡").with(crossterm::style::Color::Yellow),
                     style::style(tool_name).with(crossterm::style::Color::Yellow).bold(),
                     style::style(args_short).with(crossterm::style::Color::DarkGrey),
                 );
             }
             EventKind::ToolCallCompleted { tool_name, success, duration_ms, .. } => {
-                use crossterm::style::{self, Stylize};
+                let indent = self.indent();
                 let icon = if *success { "✓" } else { "✗" };
                 let color = if *success { crossterm::style::Color::Green } else { crossterm::style::Color::Red };
-                eprintln!("  {} {} {}",
+                eprintln!("{}  {} {} {}",
+                    indent,
                     style::style(icon).with(color),
                     style::style(tool_name).with(crossterm::style::Color::DarkGrey),
                     style::style(format!("{}ms", duration_ms)).with(crossterm::style::Color::DarkGrey),
                 );
             }
             EventKind::LlmCallStarted { model, .. } => {
-                use crossterm::style::{self, Stylize};
-                eprint!("  {} {} ",
+                let indent = self.indent();
+                eprint!("{}  {} {} ",
+                    indent,
                     style::style("🧠").reset(),
                     style::style(format!("llm ({})", model)).with(crossterm::style::Color::DarkGrey),
                 );
-                use std::io::Write;
                 let _ = std::io::stderr().flush();
             }
             EventKind::LlmCallCompleted { duration_ms, completion_tokens, .. } => {
-                use crossterm::style::{self, Stylize};
                 eprintln!("{}", style::style(format!("{}ms, {} tokens", duration_ms, completion_tokens)).with(crossterm::style::Color::DarkGrey));
             }
             _ => {}
@@ -379,7 +399,7 @@ impl Session {
         // Event bus — always attach TUI listener for stage progress
         {
             let mut bus = EventBus::new(&format!("tui-{}", std::process::id()));
-            bus.add_listener(Box::new(TuiEventListener));
+            bus.add_listener(Box::new(TuiEventListener::new()));
             if cfg.verbose {
                 bus.add_listener(Box::new(StderrListener::new(true)));
             }
