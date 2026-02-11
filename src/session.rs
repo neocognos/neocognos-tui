@@ -16,6 +16,8 @@ use neocognos_modules::file_tools::FileToolsModule;
 use neocognos_modules::history::HistoryModule;
 use neocognos_modules::identity::IdentityModule;
 use neocognos_modules::noop::NoopModule;
+use neocognos_modules::search_tools::SearchToolsModule;
+use neocognos_modules::session_memory::SessionMemoryModule;
 use neocognos_protocol::*;
 
 use crate::agent_thread::AgentEvent;
@@ -133,6 +135,8 @@ fn build_module_registry() -> ModuleRegistry {
     registry.register("exec", || Box::new(ExecModule::new()));
     registry.register("file_tools", || Box::new(FileToolsModule::new()));
     registry.register("about_me", || Box::new(AboutMeModule::new()));
+    registry.register("search_tools", || Box::new(SearchToolsModule::new()));
+    registry.register("session_memory", || Box::new(SessionMemoryModule::new()));
     registry
 }
 
@@ -355,9 +359,14 @@ impl Session {
                 "autonomy_level": about_me_autonomy,
                 "tools": serde_json::json!([
                     {"name": "exec", "description": "Execute shell commands"},
-                    {"name": "read_file", "description": "Read file contents"},
-                    {"name": "write_file", "description": "Write content to a file"},
+                    {"name": "read_file", "description": "Read file contents (with offset/limit)"},
+                    {"name": "write_file", "description": "Write content to a file (shows diff)"},
                     {"name": "list_directory", "description": "List files in a directory"},
+                    {"name": "grep", "description": "Search for patterns in files"},
+                    {"name": "find", "description": "Find files by name/pattern"},
+                    {"name": "memory_save", "description": "Save a fact to session memory"},
+                    {"name": "memory_recall", "description": "Recall facts from session memory"},
+                    {"name": "memory_clear", "description": "Clear session memory"},
                     {"name": "about_me", "description": "Learn about yourself"}
                 ]),
             });
@@ -367,6 +376,35 @@ impl Session {
             agent.register_tool_executor("about_me", Arc::new(move |call| {
                 about_me_clone.execute_tool(call)
             }));
+        }
+
+        // Search tools
+        {
+            let mut st = SearchToolsModule::new();
+            if let Some(cfg) = module_config_map.get("search_tools") {
+                st.init(cfg).ok();
+            }
+            let st = Arc::new(st);
+            for tool_name in &["grep", "find"] {
+                let st_clone = st.clone();
+                agent.register_tool_executor(*tool_name, Arc::new(move |call| {
+                    st_clone.execute_tool(call)
+                }));
+            }
+        }
+        // Session memory
+        {
+            let mut sm = SessionMemoryModule::new();
+            if let Some(cfg) = module_config_map.get("session_memory") {
+                sm.init(cfg).ok();
+            }
+            let sm = Arc::new(sm);
+            for tool_name in &["memory_save", "memory_recall", "memory_clear"] {
+                let sm_clone = sm.clone();
+                agent.register_tool_executor(*tool_name, Arc::new(move |call| {
+                    sm_clone.execute_tool(call)
+                }));
+            }
         }
 
         // Event bus with channel listener
