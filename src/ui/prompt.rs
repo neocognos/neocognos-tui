@@ -1,14 +1,127 @@
-//! Input prompt handling with rustyline.
+//! Input prompt handling with rustyline + file path and command autocomplete.
 
+use std::borrow::Cow;
+use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::{DefaultEditor, Result as RlResult};
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::validate::Validator;
+use rustyline::{Config, Context, Editor, Helper, Result as RlResult};
 use crossterm::style::{self, Stylize};
 
 use super::theme;
 
+/// Slash commands available for completion.
+const SLASH_COMMANDS: &[&str] = &[
+    "/quit", "/exit", "/q", "/clear", "/model", "/compact", "/help", "/?",
+];
+
+/// Custom helper that provides file path and slash command completion.
+struct NeocognosHelper;
+
+impl Helper for NeocognosHelper {}
+impl Highlighter for NeocognosHelper {
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(&'s self, prompt: &'p str, _default: bool) -> Cow<'b, str> {
+        Cow::Borrowed(prompt)
+    }
+}
+impl Hinter for NeocognosHelper {
+    type Hint = String;
+    fn hint(&self, _line: &str, _pos: usize, _ctx: &Context<'_>) -> Option<String> {
+        None
+    }
+}
+impl Validator for NeocognosHelper {}
+
+impl Completer for NeocognosHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> RlResult<(usize, Vec<Pair>)> {
+        let text = &line[..pos];
+
+        // Find the start of the current "word" (token being completed)
+        let word_start = text.rfind(|c: char| c.is_whitespace()).map(|i| i + 1).unwrap_or(0);
+        let word = &text[word_start..];
+
+        // Slash command completion (only at start of line)
+        if word_start == 0 && word.starts_with('/') {
+            let candidates: Vec<Pair> = SLASH_COMMANDS
+                .iter()
+                .filter(|cmd| cmd.starts_with(word))
+                .map(|cmd| Pair {
+                    display: cmd.to_string(),
+                    replacement: cmd.to_string(),
+                })
+                .collect();
+            return Ok((word_start, candidates));
+        }
+
+        // File path completion
+        if word.starts_with('/') || word.starts_with("./") || word.starts_with("../") || word.starts_with('~') {
+            let expanded = if word.starts_with('~') {
+                if let Ok(home) = std::env::var("HOME") {
+                    format!("{}{}", home, &word[1..])
+                } else {
+                    word.to_string()
+                }
+            } else {
+                word.to_string()
+            };
+
+            let (dir_path, prefix) = if expanded.ends_with('/') {
+                (expanded.as_str(), "")
+            } else {
+                match expanded.rfind('/') {
+                    Some(idx) => (&expanded[..=idx], &expanded[idx + 1..])  ,
+                    None => return Ok((pos, vec![])),
+                }
+            };
+
+            if let Ok(entries) = std::fs::read_dir(dir_path) {
+                let candidates: Vec<Pair> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.file_name()
+                            .to_str()
+                            .map(|n| n.starts_with(prefix))
+                            .unwrap_or(false)
+                    })
+                    .filter_map(|e| {
+                        let name = e.file_name().to_str()?.to_string();
+                        let is_dir = e.file_type().ok()?.is_dir();
+                        let suffix = if is_dir { "/" } else { " " };
+                        // Build the full replacement from the original word
+                        let base = if word.ends_with('/') {
+                            word.to_string()
+                        } else {
+                            match word.rfind('/') {
+                                Some(idx) => word[..=idx].to_string(),
+                                None => word.to_string(),
+                            }
+                        };
+                        let replacement = format!("{}{}{}", base, name, suffix);
+                        Some(Pair {
+                            display: if is_dir { format!("{}/", name) } else { name },
+                            replacement,
+                        })
+                    })
+                    .collect();
+                return Ok((word_start, candidates));
+            }
+        }
+
+        Ok((pos, vec![]))
+    }
+}
+
 /// The interactive prompt handler.
 pub struct InputPrompt {
-    editor: DefaultEditor,
+    editor: Editor<NeocognosHelper, rustyline::history::DefaultHistory>,
     history_path: Option<String>,
     model_name: String,
     agent_name: String,
@@ -16,10 +129,14 @@ pub struct InputPrompt {
 
 impl InputPrompt {
     pub fn new(agent_name: &str, model_name: &str) -> Self {
-        let editor = DefaultEditor::new().expect("Failed to create editor");
+        let config = Config::builder()
+            .completion_type(rustyline::CompletionType::List)
+            .build();
+        let mut editor = Editor::with_config(config).expect("Failed to create editor");
+        editor.set_helper(Some(NeocognosHelper));
+
         let history_path = dirs_path().map(|p| {
-            let path = format!("{}/.neocognos_history", p);
-            path
+            format!("{}/.neocognos_history", p)
         });
 
         let mut prompt = Self {

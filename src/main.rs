@@ -144,6 +144,10 @@ fn main() -> Result<()> {
                 println!("⚠ Model switching at runtime not yet implemented. Restart with --model {model}");
                 continue;
             }
+            commands::CommandResult::Compact => {
+                session.compact();
+                continue;
+            }
             commands::CommandResult::ShellCommand(cmd) => {
                 let output = std::process::Command::new("sh")
                     .arg("-c")
@@ -161,7 +165,9 @@ fn main() -> Result<()> {
         }
 
         match session.run_turn(input) {
-            Ok(_) => {}
+            Ok(_) => {
+                session.check_token_budget();
+            }
             Err(e) => {
                 eprintln!("{} {}",
                     style::style("Error:").with(theme::ERROR_COLOR).bold(),

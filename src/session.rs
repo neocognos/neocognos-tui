@@ -489,6 +489,34 @@ impl Session {
         Ok(result.output.text)
     }
 
+    /// Compact conversation history, keeping only the last 2 exchanges.
+    pub fn compact(&mut self) {
+        match self.agent.compact_history(2) {
+            Some((old, new)) => {
+                println!("✅ Compacted: {} messages → {} messages", old, new);
+                // Reset token stats
+                self.stats.total_prompt_tokens = 0;
+                self.stats.total_completion_tokens = 0;
+            }
+            None => {
+                println!("⚠ No history module found to compact.");
+            }
+        }
+    }
+
+    /// Check token budget and print warning if > 80% full.
+    pub fn check_token_budget(&self) {
+        let budget = 200_000usize; // default budget
+        let used = self.stats.total_tokens();
+        let pct = (used as f64 / budget as f64 * 100.0) as usize;
+        if pct > 80 {
+            let used_k = used / 1000;
+            let budget_k = budget / 1000;
+            eprintln!("⚠ Context is {}% full ({}k/{}k tokens). Use /compact to free space.",
+                pct, used_k, budget_k);
+        }
+    }
+
     pub fn shutdown(&mut self) -> Result<()> {
         self.agent.shutdown()
     }

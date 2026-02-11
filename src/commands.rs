@@ -17,6 +17,8 @@ pub enum CommandResult {
     Clear,
     /// Execute shell command.
     ShellCommand(String),
+    /// Compact conversation history.
+    Compact,
 }
 
 /// Process a potential slash command or shell command. Returns CommandResult.
@@ -57,10 +59,7 @@ pub fn process_command(input: &str) -> CommandResult {
             print_help();
             CommandResult::Continue
         }
-        "/compact" => {
-            println!("⚠ Compact mode not yet implemented");
-            CommandResult::Continue
-        }
+        "/compact" => CommandResult::Compact,
         _ => {
             println!("Unknown command: {cmd}. Type /help for available commands.");
             CommandResult::Continue
