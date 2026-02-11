@@ -113,7 +113,7 @@ fn main() -> Result<()> {
             let layout = ui::layout::compute_layout(frame.area());
             ui::chat::render(frame, layout.chat, &app);
             ui::sidebar::render_status(frame, layout.sidebar_status, &app);
-            ui::sidebar::render_llm_log(frame, layout.sidebar_llm_log, &app);
+            ui::sidebar::render_trace(frame, layout.sidebar_llm_log, &app);
             ui::input::render(frame, layout.input, &app);
         })?;
 
@@ -121,9 +121,14 @@ fn main() -> Result<()> {
         while let Ok(evt) = event_rx.try_recv() {
             match evt {
                 AgentEvent::Narration(text) => {
-                    app.add_message(ChatMessage::Narration(text));
+                    app.add_message(ChatMessage::Narration(text.clone()));
+                    app.trace_log.push(app::TraceEntry::Narration(text));
                 }
                 AgentEvent::ToolCallStarted { name, args } => {
+                    app.trace_log.push(app::TraceEntry::ToolCall {
+                        name: name.clone(),
+                        args: args.clone(),
+                    });
                     app.add_message(ChatMessage::ToolCall {
                         name: name.clone(),
                         args_short: args,
@@ -138,14 +143,38 @@ fn main() -> Result<()> {
                 }
                 AgentEvent::LlmCall { model, prompt_tokens, completion_tokens, duration_ms } => {
                     app.llm_calls.push(app::LlmCallEntry {
-                        model,
+                        model: model.clone(),
                         prompt_tokens,
                         completion_tokens,
                         duration_ms,
                     });
+                    app.trace_log.push(app::TraceEntry::LlmCall {
+                        model,
+                        ctx_tokens: prompt_tokens,
+                        out_tokens: completion_tokens,
+                        duration_ms,
+                    });
+                }
+                AgentEvent::StageStarted { stage_id, stage_kind } => {
+                    app.trace_log.push(app::TraceEntry::StageStart {
+                        id: stage_id,
+                        kind: stage_kind,
+                    });
+                }
+                AgentEvent::StageCompleted { stage_id, duration_ms, skipped } => {
+                    app.trace_log.push(app::TraceEntry::StageEnd {
+                        id: stage_id,
+                        duration_ms,
+                        skipped,
+                    });
                 }
                 AgentEvent::ToolCallCompleted { name, success, duration_ms } => {
                     app.add_message(ChatMessage::ToolResult {
+                        name: name.clone(),
+                        success,
+                        duration_ms,
+                    });
+                    app.trace_log.push(app::TraceEntry::ToolResult {
                         name: name.clone(),
                         success,
                         duration_ms,

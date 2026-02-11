@@ -30,6 +30,17 @@ pub struct LlmCallEntry {
     pub duration_ms: u64,
 }
 
+/// A trace log entry for the workflow trace panel.
+#[derive(Debug, Clone)]
+pub enum TraceEntry {
+    StageStart { id: String, kind: String },
+    StageEnd { id: String, duration_ms: u64, skipped: bool },
+    LlmCall { model: String, ctx_tokens: usize, out_tokens: usize, duration_ms: u64 },
+    ToolCall { name: String, args: String },
+    ToolResult { name: String, success: bool, duration_ms: u64 },
+    Narration(String),
+}
+
 /// Status info for the sidebar.
 #[derive(Debug, Clone, Default)]
 pub struct StatusInfo {
@@ -65,6 +76,7 @@ pub struct App {
     pub recent_files: Vec<String>,
     pub recent_tools: Vec<ToolStatus>,
     pub llm_calls: Vec<LlmCallEntry>,
+    pub trace_log: Vec<TraceEntry>,
     pub agent_busy: bool,
     pub should_quit: bool,
     pub input_history: Vec<String>,
@@ -88,6 +100,7 @@ impl App {
             recent_files: Vec::new(),
             recent_tools: Vec::new(),
             llm_calls: Vec::new(),
+            trace_log: Vec::new(),
             agent_busy: false,
             should_quit: false,
             input_history: Vec::new(),

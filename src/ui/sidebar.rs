@@ -52,47 +52,97 @@ pub fn render_status(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-/// Render the LLM call log (lower sidebar).
-pub fn render_llm_log(frame: &mut Frame, area: Rect, app: &App) {
+/// Render the workflow trace (lower sidebar).
+pub fn render_trace(frame: &mut Frame, area: Rect, app: &App) {
+    use crate::app::TraceEntry;
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border_style())
-        .title(Span::styled(" LLM Calls ", theme::accent_style()));
+        .title(Span::styled(" Trace ", theme::accent_style()));
 
     let mut lines: Vec<Line> = Vec::new();
 
-    if app.llm_calls.is_empty() {
-        lines.push(Line::from(Span::styled(" No calls yet", theme::dim_style())));
+    if app.trace_log.is_empty() {
+        lines.push(Line::from(Span::styled(" Waiting...", theme::dim_style())));
     } else {
-        // Show calls in reverse order (most recent first), with index
-        let max_visible = (area.height as usize).saturating_sub(2); // account for borders
-        for (i, call) in app.llm_calls.iter().enumerate().rev().take(max_visible) {
-            let ctx_k = (call.prompt_tokens as f64 / 1000.0).round() as usize;
-            let out_tokens = call.completion_tokens;
-            let dur = if call.duration_ms >= 1000 {
-                format!("{:.1}s", call.duration_ms as f64 / 1000.0)
-            } else {
-                format!("{}ms", call.duration_ms)
-            };
-
-            let model_short = if call.model.len() > 12 {
-                &call.model[..12]
-            } else {
-                &call.model
-            };
-
-            lines.push(Line::from(vec![
-                Span::styled(format!(" #{:<2} ", i + 1), theme::dim_style()),
-                Span::styled(model_short, theme::user_style()),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("     ", Style::default()),
-                Span::styled(format!("{}k in", ctx_k), theme::dim_style()),
-                Span::styled(" → ", theme::dim_style()),
-                Span::styled(format!("{} out", out_tokens), theme::dim_style()),
-                Span::styled(format!(" ({})", dur), theme::dim_style()),
-            ]));
+        for entry in &app.trace_log {
+            match entry {
+                TraceEntry::StageStart { id, kind } => {
+                    lines.push(Line::from(vec![
+                        Span::styled(" ▶ ", Style::default().fg(Color::Cyan)),
+                        Span::styled(id, theme::dim_style()),
+                        Span::styled(format!(" ({})", kind), Style::default().fg(Color::DarkGray)),
+                    ]));
+                }
+                TraceEntry::StageEnd { id: _, duration_ms, skipped } => {
+                    if *skipped {
+                        lines.push(Line::from(Span::styled("   ⏭ skipped", Style::default().fg(Color::Yellow))));
+                    } else if *duration_ms > 100 {
+                        lines.push(Line::from(Span::styled(
+                            format!("   ✓ {}ms", duration_ms),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                    // Don't show completion for fast stages (< 100ms) to reduce noise
+                }
+                TraceEntry::LlmCall { model, ctx_tokens, out_tokens, duration_ms } => {
+                    let ctx_k = (*ctx_tokens as f64 / 1000.0).round() as usize;
+                    let dur = if *duration_ms >= 1000 {
+                        format!("{:.1}s", *duration_ms as f64 / 1000.0)
+                    } else {
+                        format!("{}ms", duration_ms)
+                    };
+                    let model_short = if model.len() > 10 { &model[..10] } else { model.as_str() };
+                    lines.push(Line::from(vec![
+                        Span::styled("   🧠 ", Style::default()),
+                        Span::styled(model_short, theme::user_style()),
+                        Span::styled(format!(" {}k→{} {}", ctx_k, out_tokens, dur), theme::dim_style()),
+                    ]));
+                }
+                TraceEntry::ToolCall { name, args } => {
+                    let args_short = if args.len() > 20 {
+                        format!("{}...", &args[..17])
+                    } else {
+                        args.clone()
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled("   ⚡ ", Style::default().fg(Color::Yellow)),
+                        Span::styled(name, Style::default().fg(Color::Yellow)),
+                        Span::styled(format!(" {}", args_short), theme::dim_style()),
+                    ]));
+                }
+                TraceEntry::ToolResult { name: _, success, duration_ms } => {
+                    let (icon, color) = if *success {
+                        ("✓", Color::Green)
+                    } else {
+                        ("✗", Color::Red)
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!("   {} {}ms", icon, duration_ms),
+                        Style::default().fg(color),
+                    )));
+                }
+                TraceEntry::Narration(text) => {
+                    let short = if text.len() > 25 {
+                        format!("{}...", &text[..22])
+                    } else {
+                        text.clone()
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!("   💬 {}", short),
+                        theme::dim_style(),
+                    )));
+                }
+            }
         }
+    }
+
+    // Auto-scroll: only show the last N lines that fit
+    let max_visible = (area.height as usize).saturating_sub(2);
+    let total = lines.len();
+    if total > max_visible {
+        lines = lines.into_iter().skip(total - max_visible).collect();
     }
 
     let paragraph = Paragraph::new(lines).block(block);

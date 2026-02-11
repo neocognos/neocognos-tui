@@ -57,6 +57,19 @@ impl EventListener for ChannelEventListener {
                     duration_ms: *duration_ms,
                 });
             }
+            EventKind::StageStarted { stage_id, stage_kind, .. } => {
+                let _ = self.tx.send(AgentEvent::StageStarted {
+                    stage_id: stage_id.clone(),
+                    stage_kind: stage_kind.clone(),
+                });
+            }
+            EventKind::StageCompleted { stage_id, duration_ms, skipped, .. } => {
+                let _ = self.tx.send(AgentEvent::StageCompleted {
+                    stage_id: stage_id.clone(),
+                    duration_ms: *duration_ms,
+                    skipped: *skipped,
+                });
+            }
             _ => {}
         }
     }
