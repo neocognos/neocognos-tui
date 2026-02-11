@@ -68,29 +68,41 @@ impl EventListener for TuiEventListener {
                 }
             }
             EventKind::ToolCallStarted { tool_name, arguments, .. } => {
-                let indent = self.indent();
-                let args_short = if arguments.len() > 60 {
-                    format!("{}...", &arguments[..57])
-                } else {
-                    arguments.clone()
-                };
-                eprintln!("{}  {} {} {}",
-                    indent,
-                    style::style("⚡").with(crossterm::style::Color::Yellow),
-                    style::style(tool_name).with(crossterm::style::Color::Yellow).bold(),
-                    style::style(args_short).with(crossterm::style::Color::DarkGrey),
-                );
+                if self.verbose {
+                    let indent = self.indent();
+                    let args_short = if arguments.len() > 60 {
+                        format!("{}...", &arguments[..57])
+                    } else {
+                        arguments.clone()
+                    };
+                    eprintln!("{}  {} {} {}",
+                        indent,
+                        style::style("⚡").with(crossterm::style::Color::Yellow),
+                        style::style(tool_name).with(crossterm::style::Color::Yellow).bold(),
+                        style::style(args_short).with(crossterm::style::Color::DarkGrey),
+                    );
+                }
             }
             EventKind::ToolCallCompleted { tool_name, success, duration_ms, .. } => {
-                let indent = self.indent();
-                let icon = if *success { "✓" } else { "✗" };
-                let color = if *success { crossterm::style::Color::Green } else { crossterm::style::Color::Red };
-                eprintln!("{}  {} {} {}",
-                    indent,
-                    style::style(icon).with(color),
-                    style::style(tool_name).with(crossterm::style::Color::DarkGrey),
-                    style::style(format!("{}ms", duration_ms)).with(crossterm::style::Color::DarkGrey),
-                );
+                if self.verbose {
+                    let indent = self.indent();
+                    let icon = if *success { "✓" } else { "✗" };
+                    let color = if *success { crossterm::style::Color::Green } else { crossterm::style::Color::Red };
+                    eprintln!("{}  {} {} {}",
+                        indent,
+                        style::style(icon).with(color),
+                        style::style(tool_name).with(crossterm::style::Color::DarkGrey),
+                        style::style(format!("{}ms", duration_ms)).with(crossterm::style::Color::DarkGrey),
+                    );
+                } else if !*success {
+                    // Always show errors even in non-verbose
+                    let indent = self.indent();
+                    eprintln!("{}  {} {} failed",
+                        indent,
+                        style::style("✗").with(crossterm::style::Color::Red),
+                        style::style(tool_name).with(crossterm::style::Color::Red),
+                    );
+                }
             }
             EventKind::LlmNarration { text, .. } => {
                 let indent = self.indent();
@@ -173,6 +185,7 @@ pub struct Session {
     pub agent_version: String,
     pub workflow_name: String,
     pub compiled_router: Option<CompiledRouter>,
+    pub verbose: bool,
 }
 
 fn build_module_registry() -> ModuleRegistry {
@@ -437,6 +450,7 @@ impl Session {
             agent_version: manifest_version,
             workflow_name: workflow_name_str,
             compiled_router,
+            verbose: cfg.verbose,
         })
     }
 
@@ -452,15 +466,18 @@ impl Session {
             }
         }
 
-        // Run the agent in a background thread so we can show a spinner
-        let spinner = ui::spinner::create_thinking_spinner();
+        // In verbose mode, show a spinner; in normal mode, narration events are the progress
+        let spinner = if self.verbose {
+            Some(ui::spinner::create_thinking_spinner())
+        } else {
+            None
+        };
 
-        let result = self.agent.run_streaming(input, &|_token| {
-            // Claude CLI doesn't give us real token streaming,
-            // but if another provider does, at least don't block
-        })?;
+        let result = self.agent.run_streaming(input, &|_token| {})?;
 
-        spinner.finish_and_clear();
+        if let Some(s) = spinner {
+            s.finish_and_clear();
+        }
 
         self.stats.total_turns += result.turns;
         self.stats.total_prompt_tokens += result.total_tokens;
