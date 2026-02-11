@@ -343,22 +343,12 @@ impl Session {
             }
         }
 
-        // Show a spinner while waiting for first token
-        let spinner = ui::spinner::create_spinner("Thinking...");
-        let spinner_cleared = std::sync::atomic::AtomicBool::new(false);
-        let streamed_lines = std::sync::atomic::AtomicUsize::new(0);
+        // Run the agent in a background thread so we can show a spinner
+        let spinner = ui::spinner::create_thinking_spinner();
 
-        let result = self.agent.run_streaming(input, &|token| {
-            // Clear spinner on first token
-            if !spinner_cleared.load(std::sync::atomic::Ordering::Relaxed) {
-                spinner.finish_and_clear();
-                spinner_cleared.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-            // Stream raw tokens with assistant color
-            ui::render::print_token(token);
-            // Track newlines for clearing later
-            let nl = token.chars().filter(|c| *c == '\n').count();
-            streamed_lines.fetch_add(nl, std::sync::atomic::Ordering::Relaxed);
+        let result = self.agent.run_streaming(input, &|_token| {
+            // Claude CLI doesn't give us real token streaming,
+            // but if another provider does, at least don't block
         })?;
 
         spinner.finish_and_clear();
@@ -366,19 +356,7 @@ impl Session {
         self.stats.total_turns += result.turns;
         self.stats.total_prompt_tokens += result.total_tokens;
 
-        // If we streamed, clear the raw output and re-render as styled markdown
-        let did_stream = spinner_cleared.load(std::sync::atomic::Ordering::Relaxed);
-        if did_stream && !result.output.text.is_empty() {
-            let lines_to_clear = streamed_lines.load(std::sync::atomic::Ordering::Relaxed) + 1;
-            // Move up and clear each line
-            use crossterm::{execute, cursor, terminal};
-            let mut stdout = std::io::stdout();
-            for _ in 0..lines_to_clear {
-                let _ = execute!(stdout, cursor::MoveUp(1), terminal::Clear(terminal::ClearType::CurrentLine));
-            }
-            ui::render::render_markdown(&result.output.text);
-        } else if !result.output.text.is_empty() {
-            println!();
+        if !result.output.text.is_empty() {
             ui::render::render_markdown(&result.output.text);
         }
 

@@ -12,11 +12,20 @@ pub enum CommandResult {
     SwitchModel(String),
     /// Clear the screen.
     Clear,
+    /// Execute shell command.
+    ExecShell(String),
 }
 
 /// Process a potential slash command. Returns CommandResult.
 pub fn process_command(input: &str) -> CommandResult {
     let trimmed = input.trim();
+    
+    // Handle ! commands (shell execution)
+    if let Some(cmd) = trimmed.strip_prefix('!') {
+        return CommandResult::ExecShell(cmd.to_string());
+    }
+    
+    // Handle / commands
     if !trimmed.starts_with('/') {
         return CommandResult::NotACommand;
     }
@@ -62,6 +71,12 @@ fn print_help() {
     println!("  {} <model> — Switch LLM model", style::style("/model").with(theme::USER_COLOR));
     println!("  {} — Compact conversation history", style::style("/compact").with(theme::USER_COLOR));
     println!("  {}  — Show this help", style::style("/help").with(theme::USER_COLOR));
+    println!();
+    println!("{}", style::style("Shell Commands").with(theme::ACCENT_COLOR).bold());
+    println!("  {} — Execute shell command directly", style::style("!<command>").with(theme::USER_COLOR));
+    println!("  Example: {} or {}", 
+        style::style("!ls -la").with(theme::DIM_COLOR),
+        style::style("!pwd").with(theme::DIM_COLOR));
     println!();
     println!("{}", style::style("Input").with(theme::ACCENT_COLOR).bold());
     println!("  Use \\ at end of line for multi-line input");

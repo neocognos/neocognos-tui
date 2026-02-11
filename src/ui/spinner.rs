@@ -19,6 +19,18 @@ pub fn create_spinner(msg: &str) -> ProgressBar {
     pb
 }
 
+/// Create a thinking spinner that shows elapsed time.
+pub fn create_thinking_spinner() -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("  {spinner:.cyan} Thinking... {elapsed_precise}")
+            .unwrap_or_else(|_| ProgressStyle::default_spinner())
+    );
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    pb
+}
+
 /// Display a tool call header and return a spinner.
 pub fn start_tool_call(tool_name: &str, args: &serde_json::Value) -> ProgressBar {
     // Print tool header
