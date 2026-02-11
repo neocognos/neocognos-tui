@@ -56,9 +56,15 @@ pub fn render_status(frame: &mut Frame, area: Rect, app: &App) {
 pub fn render_trace(frame: &mut Frame, area: Rect, app: &App) {
     use crate::app::TraceEntry;
 
+    let is_focused = app.focus == crate::app::PanelFocus::Trace;
+    let border_style = if is_focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        theme::border_style()
+    };
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::border_style());
+        .border_style(border_style);
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -153,11 +159,14 @@ pub fn render_trace(frame: &mut Frame, area: Rect, app: &App) {
 
     let visible: Vec<Line> = lines.into_iter().skip(start).take(max_visible).collect();
 
-    // Show scroll indicator if not at bottom
-    let title = if app.trace_scroll.is_some() {
-        format!(" Trace [{}/{} ↕Ctrl+↑↓] ", start + 1, total)
+    let title = if is_focused {
+        if app.trace_scroll.is_some() {
+            format!(" ● Trace [{}/{}] PgUp/Dn ", start + 1, total)
+        } else {
+            " ● Trace [Tab→focus] ".to_string()
+        }
     } else {
-        " Trace ".to_string()
+        " Trace [Tab→focus] ".to_string()
     };
 
     let block = block.title(Span::styled(title, theme::accent_style()));

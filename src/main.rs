@@ -277,38 +277,51 @@ fn handle_key_event(app: &mut App, key: KeyEvent, input_tx: &mpsc::Sender<String
         (_, KeyCode::Down) => app.history_down(),
         (_, KeyCode::Home) => app.move_cursor_home(),
         (_, KeyCode::End) => app.move_cursor_end(),
-        // Ctrl+Up/Down for trace panel scrolling
-        (KeyModifiers::CONTROL, KeyCode::Up) => {
-            let total = app.trace_log.len();
-            let pos = app.trace_scroll.unwrap_or(total);
-            app.trace_scroll = Some(pos.saturating_sub(3));
+        // Tab toggles focus between Chat and Trace panels
+        (_, KeyCode::Tab) => {
+            app.focus = match app.focus {
+                app::PanelFocus::Chat => app::PanelFocus::Trace,
+                app::PanelFocus::Trace => app::PanelFocus::Chat,
+            };
         }
-        (KeyModifiers::CONTROL, KeyCode::Down) => {
-            if let Some(pos) = app.trace_scroll {
-                let total = app.trace_log.len();
-                let new_pos = pos + 3;
-                if new_pos >= total {
-                    app.trace_scroll = None; // resume auto-scroll
-                } else {
-                    app.trace_scroll = Some(new_pos);
+        // Page Up/Down for scrolling (routes to focused panel)
+        (_, KeyCode::PageUp) => {
+            match app.focus {
+                app::PanelFocus::Chat => {
+                    if app.scroll_offset == usize::MAX {
+                        let total = app.messages.len();
+                        app.scroll_offset = total.saturating_sub(10);
+                    }
+                    app.scroll_offset = app.scroll_offset.saturating_sub(10);
+                }
+                app::PanelFocus::Trace => {
+                    let total = app.trace_log.len();
+                    let pos = app.trace_scroll.unwrap_or(total);
+                    app.trace_scroll = Some(pos.saturating_sub(5));
                 }
             }
         }
-        // Page Up/Down for chat scrolling
-        (_, KeyCode::PageUp) => {
-            if app.scroll_offset == usize::MAX {
-                // Calculate current position first
-                let total = app.messages.len();
-                app.scroll_offset = total.saturating_sub(10);
-            }
-            app.scroll_offset = app.scroll_offset.saturating_sub(10);
-        }
         (_, KeyCode::PageDown) => {
-            app.scroll_offset = if app.scroll_offset == usize::MAX {
-                usize::MAX
-            } else {
-                app.scroll_offset + 10
-            };
+            match app.focus {
+                app::PanelFocus::Chat => {
+                    app.scroll_offset = if app.scroll_offset == usize::MAX {
+                        usize::MAX
+                    } else {
+                        app.scroll_offset + 10
+                    };
+                }
+                app::PanelFocus::Trace => {
+                    if let Some(pos) = app.trace_scroll {
+                        let total = app.trace_log.len();
+                        let new_pos = pos + 5;
+                        if new_pos >= total {
+                            app.trace_scroll = None;
+                        } else {
+                            app.trace_scroll = Some(new_pos);
+                        }
+                    }
+                }
+            }
         }
         // Regular character input
         (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
