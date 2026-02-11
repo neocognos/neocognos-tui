@@ -9,6 +9,7 @@ pub enum CommandResult {
     Clear,
     ShellCommand(String),
     Compact,
+    Cost,
 }
 
 /// Process a potential slash command or shell command.
@@ -43,6 +44,7 @@ pub fn process_command(input: &str) -> CommandResult {
         }
         "/help" | "/?" => CommandResult::Continue,
         "/compact" => CommandResult::Compact,
+        "/cost" => CommandResult::Cost,
         _ => CommandResult::Continue,
     }
 }

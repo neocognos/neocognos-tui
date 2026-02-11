@@ -59,7 +59,7 @@ fn agent_loop(
                 // Check if it was /help
                 if input.trim().starts_with("/help") || input.trim() == "/?" {
                     let help = "\
-Commands: /quit /clear /model <m> /compact /help\n\
+Commands: /quit /clear /model <m> /compact /cost /help\n\
 Shell: !<command>\n\
 Keys: Ctrl+C quit | Ctrl+L clear | PgUp/PgDn scroll | Up/Down history";
                     let _ = event_tx.send(AgentEvent::SystemMessage(help.to_string()));
@@ -83,6 +83,28 @@ Keys: Ctrl+C quit | Ctrl+L clear | PgUp/PgDn scroll | Up/Down history";
                 session.compact_with_callback(|msg| {
                     let _ = event_tx.send(AgentEvent::SystemMessage(msg));
                 });
+                let _ = event_tx.send(AgentEvent::Done);
+                continue;
+            }
+            CommandResult::Cost => {
+                let stats = &session.stats;
+                let total_prompt = stats.total_prompt_tokens;
+                let total_completion = stats.total_completion_tokens;
+                let total = stats.total_tokens();
+                let cost = stats.estimated_cost();
+                let context_budget = 200_000usize;
+                let context_pct = (total_prompt as f64 / context_budget as f64 * 100.0).min(100.0);
+                let msg = format!(
+                    "Session cost breakdown:\n  Turns: {}\n  Input tokens: ~{}\n  Output tokens: ~{}\n  Estimated cost: ~${:.2}\n\n  Context: {:.0}% full ({}k / {}k)",
+                    stats.total_turns,
+                    total_prompt,
+                    total_completion,
+                    cost,
+                    context_pct,
+                    total_prompt / 1000,
+                    context_budget / 1000,
+                );
+                let _ = event_tx.send(AgentEvent::SystemMessage(msg));
                 let _ = event_tx.send(AgentEvent::Done);
                 continue;
             }
@@ -117,6 +139,17 @@ Keys: Ctrl+C quit | Ctrl+L clear | PgUp/PgDn scroll | Up/Down history";
                     turns: stats.total_turns,
                     cost: stats.estimated_cost(),
                 });
+
+                // Auto-compact at 80% context usage
+                let context_budget: usize = 200_000;
+                let usage = session.stats.total_prompt_tokens;
+                if usage > context_budget * 80 / 100 && session.stats.total_turns >= 3 {
+                    let pct = (usage as f64 / context_budget as f64 * 100.0) as u32;
+                    session.compact_with_callback(|_| {});
+                    let _ = event_tx.send(AgentEvent::SystemMessage(
+                        format!("⚡ Auto-compacted: context was {}% full", pct)
+                    ));
+                }
             }
             Err(e) => {
                 let _ = event_tx.send(AgentEvent::Error(format!("{e}")));
