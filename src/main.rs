@@ -277,7 +277,24 @@ fn handle_key_event(app: &mut App, key: KeyEvent, input_tx: &mpsc::Sender<String
         (_, KeyCode::Down) => app.history_down(),
         (_, KeyCode::Home) => app.move_cursor_home(),
         (_, KeyCode::End) => app.move_cursor_end(),
-        // Page Up/Down for scrolling
+        // Ctrl+Up/Down for trace panel scrolling
+        (KeyModifiers::CONTROL, KeyCode::Up) => {
+            let total = app.trace_log.len();
+            let pos = app.trace_scroll.unwrap_or(total);
+            app.trace_scroll = Some(pos.saturating_sub(3));
+        }
+        (KeyModifiers::CONTROL, KeyCode::Down) => {
+            if let Some(pos) = app.trace_scroll {
+                let total = app.trace_log.len();
+                let new_pos = pos + 3;
+                if new_pos >= total {
+                    app.trace_scroll = None; // resume auto-scroll
+                } else {
+                    app.trace_scroll = Some(new_pos);
+                }
+            }
+        }
+        // Page Up/Down for chat scrolling
         (_, KeyCode::PageUp) => {
             if app.scroll_offset == usize::MAX {
                 // Calculate current position first

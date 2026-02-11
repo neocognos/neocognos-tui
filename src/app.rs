@@ -77,6 +77,7 @@ pub struct App {
     pub recent_tools: Vec<ToolStatus>,
     pub llm_calls: Vec<LlmCallEntry>,
     pub trace_log: Vec<TraceEntry>,
+    pub trace_scroll: Option<usize>,  // None = auto-scroll (follow), Some(n) = pinned at offset n
     pub agent_busy: bool,
     pub should_quit: bool,
     pub input_history: Vec<String>,
@@ -101,6 +102,7 @@ impl App {
             recent_tools: Vec::new(),
             llm_calls: Vec::new(),
             trace_log: Vec::new(),
+            trace_scroll: None,
             agent_busy: false,
             should_quit: false,
             input_history: Vec::new(),

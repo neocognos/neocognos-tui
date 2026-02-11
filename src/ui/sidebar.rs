@@ -56,10 +56,9 @@ pub fn render_status(frame: &mut Frame, area: Rect, app: &App) {
 pub fn render_trace(frame: &mut Frame, area: Rect, app: &App) {
     use crate::app::TraceEntry;
 
-    let block = Block::default()
+    let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::border_style())
-        .title(Span::styled(" Trace ", theme::accent_style()));
+        .border_style(theme::border_style());
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -138,13 +137,31 @@ pub fn render_trace(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
 
-    // Auto-scroll: only show the last N lines that fit
     let max_visible = (area.height as usize).saturating_sub(2);
     let total = lines.len();
-    if total > max_visible {
-        lines = lines.into_iter().skip(total - max_visible).collect();
-    }
 
-    let paragraph = Paragraph::new(lines).block(block);
+    // Scroll handling
+    let start = match app.trace_scroll {
+        None => {
+            // Auto-scroll: show last N lines
+            total.saturating_sub(max_visible)
+        }
+        Some(offset) => {
+            offset.min(total.saturating_sub(max_visible))
+        }
+    };
+
+    let visible: Vec<Line> = lines.into_iter().skip(start).take(max_visible).collect();
+
+    // Show scroll indicator if not at bottom
+    let title = if app.trace_scroll.is_some() {
+        format!(" Trace [{}/{} ↕Ctrl+↑↓] ", start + 1, total)
+    } else {
+        " Trace ".to_string()
+    };
+
+    let block = block.title(Span::styled(title, theme::accent_style()));
+
+    let paragraph = Paragraph::new(visible).block(block);
     frame.render_widget(paragraph, area);
 }
