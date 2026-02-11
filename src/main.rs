@@ -6,6 +6,8 @@ mod ui;
 
 use anyhow::Result;
 use crossterm::style::{self, Stylize};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use session::{Session, SessionConfig};
 use ui::theme;
@@ -54,6 +56,18 @@ fn print_status_bar(session: &Session) {
 }
 
 fn main() -> Result<()> {
+    // Ctrl+C handler — force exit
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        if !r.load(Ordering::SeqCst) {
+            // Second Ctrl+C — force exit
+            std::process::exit(1);
+        }
+        r.store(false, Ordering::SeqCst);
+        eprintln!("\n⚠ Interrupted. Press Ctrl+C again to force quit.");
+    }).ok();
+
     let args: Vec<String> = std::env::args().collect();
 
     if has_flag(&args, "--help") || has_flag(&args, "-h") {
